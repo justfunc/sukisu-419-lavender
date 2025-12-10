@@ -36,7 +36,7 @@ jobs:
         cd kernel_source
         # 修复：明确指定分支，susfs-main 并不总是存在，建议使用 susfs-v1.5.5 或 nongki
         # 这里为你保留 susfs 功能
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-v1.5.5
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
         echo "SukiSU Source Integrated"
 
     - name: Configure Kernel
