@@ -48,7 +48,7 @@ jobs:
         # 优先查找 lavender (Redmi Note 7) 的配置
         DEFCONFIG_NAME=""
         # 遍历可能的配置文件名
-        for conf in "lavender_defconfig" "vendor/lavender_defconfig" "whyred_defconfig" "sdm660_defconfig"; do
+        for conf in "lavender_defconfig" "gki_defconfig" "defconfig"; do
             if [ -f "arch/arm64/configs/$conf" ]; then
                 DEFCONFIG_NAME=$conf
                 break
