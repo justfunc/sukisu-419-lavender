@@ -1,0 +1,128 @@
+name: Build SukiSU-Ultra Kernel (4.19 SDM660)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: user-why-red/android_kernel_xiaomi_sdm660_419
+        path: kernel_source
+        fetch-depth: 1
+
+    - name: Setup Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc curl git gnupg gperf imagemagick lib32readline-dev \
+        lib32z1-dev liblz4-tool libsdl1.2-dev libssl-dev libwxgtk3.0-gtk3-dev libxml2 libxml2-utils \
+        lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libc6-dev-i386 \
+        libncurses5-dev lib32ncurses5-dev python3 python2
+
+    - name: Download Clang Toolchain (Proton-Clang 13)
+      run: |
+        mkdir -p clang
+        cd clang
+        # 4.19 内核通常配合 Clang 13 使用效果较好
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git -b master .
+        cd ..
+
+    - name: Integrate SukiSU-Ultra (Non-GKI)
+      run: |
+        cd kernel_source
+        # 使用官方脚本集成 SukiSU-Ultra (nongki 分支)
+        # 如果需要 susfs 支持，可以将下面的 'nongki' 替换为 'susfs-v1.5.5' (请确认版本号)
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+        
+        echo "SukiSU Source Integrated"
+
+    - name: Configure Kernel (Enable KPM & Kallsyms)
+      run: |
+        cd kernel_source
+        
+        # 自动查找可能的 defconfig 文件
+        DEFCONFIG_NAME="gki_defconfig"
+        if [ ! -f "arch/arm64/configs/$DEFCONFIG_NAME" ]; then
+            echo "Standard lavender_defconfig not found, searching..."
+            DEFCONFIG_NAME=$(find arch/arm64/configs -name "*lavender*defconfig" | xargs -n 1 basename | head -n 1)
+            if [ -z "$DEFCONFIG_NAME" ]; then
+                DEFCONFIG_NAME="defconfig" # 备用选项
+            fi
+        fi
+        echo "Using defconfig: $DEFCONFIG_NAME"
+        export DEFCONFIG_NAME
+
+        # 设置环境变量以便脚本使用
+        export ARCH=arm64
+        export CROSS_COMPILE=$(pwd)/../clang/bin/aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=$(pwd)/../clang/bin/arm-linux-androideabi-
+        export CC=$(pwd)/../clang/bin/clang
+        
+        # 生成 .config
+        make O=out $DEFCONFIG_NAME
+
+        # 修改 .config 以开启 SukiSU 必需的选项
+        cd out
+        ../scripts/config --file .config --enable CONFIG_KPM
+        ../scripts/config --file .config --enable CONFIG_KALLSYMS
+        ../scripts/config --file .config --enable CONFIG_KALLSYMS_ALL
+        ../scripts/config --file .config --enable CONFIG_KPROBES
+        ../scripts/config --file .config --enable CONFIG_HAVE_KPROBES
+        ../scripts/config --file .config --enable CONFIG_MODULES
+        ../scripts/config --file .config --enable CONFIG_MODULE_UNLOAD
+        ../scripts/config --file .config --enable CONFIG_KPROBE_EVENTS
+        ../scripts/config --file .config --enable CONFIG_KSU_MANUAL_HOOK
+        ../scripts/config --file .config --enable CONFIG_OVERLAY_FS
+        
+        # 针对 4.19 可能需要的兼容性修复 (如果源码中没有导出 set_memory_ro 等)
+        # 许多非 GKI 内核默认未开启此项
+        ../scripts/config --file .config --disable CONFIG_LTO_CLANG 
+        ../scripts/config --file .config --disable CONFIG_LTO
+        
+        # 重新生成 defconfig (可选，确保依赖关系正确)
+        make O=. olddefconfig
+        cd ..
+
+    - name: Build Kernel
+      run: |
+        cd kernel_source
+        export PATH=$(pwd)/../clang/bin:$PATH
+        export ARCH=arm64
+        export SUBARCH=arm64
+        
+        # 开始编译
+        make -j$(nproc) O=out \
+             CC=clang \
+             CROSS_COMPILE=aarch64-linux-android- \
+             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             Image.gz-dtb
+
+    - name: Package with AnyKernel3
+      run: |
+        # 克隆通用的 AnyKernel3
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+        
+        # 复制编译好的镜像
+        # 注意：Xiaomi SDM660 通常使用 Image.gz-dtb
+        cp kernel_source/out/arch/arm64/boot/Image.gz-dtb ak3/
+        
+        cd ak3
+        # 修改 anykernel.sh 以适配 lavender (如果需要)
+        # 这里做一个简单的替换，将默认的设备检查移除或改为 lavender，视 AK3 脚本逻辑而定
+        # 大多数通用 AK3 会自动识别，但为了保险，你可以根据实际情况修改
+        # 比如：sed -i 's/device.name1=.*/device.name1=lavender/' anykernel.sh
+        
+        # 打包
+        zip -r9 SukiSU-Ultra-Kernel-lavender-4.19.zip * -x .git README.md *placeholder
+        mv SukiSU-Ultra-Kernel-lavender-4.19.zip ..
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SukiSU-Ultra-Kernel
+        path: SukiSU-Ultra-Kernel-lavender-4.19.zip
